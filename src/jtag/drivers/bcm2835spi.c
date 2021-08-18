@@ -14,18 +14,19 @@
 
 typedef struct
 {
-	volatile uint32_t gpfsel[6];	// 0
+	volatile uint32_t gpfsel[6];	// 0x0
 	volatile uint32_t reserve1[1];
-	volatile uint32_t gpset[3];		// 7
+	volatile uint32_t gpset[3];		// 0x1C
 	volatile uint32_t gpclr[3];		// 10
 	volatile uint32_t gplev[3];		// 13
-	volatile uint32_t gpeds[3];
-	volatile uint32_t gpren[3];
-	volatile uint32_t gpfen[3];
-	volatile uint32_t gphen[3];
-	volatile uint32_t gplen[3];
-	volatile uint32_t gparen[3];
-	volatile uint32_t gpafen[3];
+	volatile uint32_t gpeds[3];		// 16
+	volatile uint32_t gpren[3];		// 19
+	volatile uint32_t gpfen[3];		// 22
+	volatile uint32_t gphen[3];		// 25
+	volatile uint32_t gplen[3];		// 28
+	volatile uint32_t gparen[3];	// 31
+	volatile uint32_t gpafen[3];	// 34
+	volatile uint32_t reserve2[20];	// 34
 	volatile uint32_t gppupdctrl[4];
 }GPIO;
 
@@ -74,7 +75,8 @@ typedef struct
 #define AUXSPI_STAT_BITS(x)			((x) << 0)
 
 
-#define GPIO_FUNCTION_OUTPUT	0x2
+#define GPIO_FUNCTION_IN		0x0
+#define GPIO_FUNCTION_OUTPUT	0x1
 #define GPIO_FUNCTION_ALT4		0x3
 
 static uint32_t bcm2835_peri_base = 0xfe000000;
@@ -204,11 +206,12 @@ static uint32_t swd_send_rcv(uint32_t data, uint32_t bit_len)
 			| AUXSPI_CNTL0_ENABLE
 //			| AUXSPI_CNTL0_DOUT_HOLD(1)
 			| AUXSPI_CNTL0_IN_RISING(1)
+//			| AUXSPI_CNTL0_INVERT_CLK(1)
 			| AUXSPI_CNTL0_OUT_RISING(0);
 
 	AuxSpi->txHoldA = (uint32_t)(data);
 	while(AuxSpi->stat & AUXSPI_STAT_BUSY);
-	return AuxSpi->peek;
+	return AuxSpi->peek >> (32 - bit_len);
 }
 
 static void swd_send(uint8_t data[], uint32_t length)
@@ -282,19 +285,27 @@ static void bcm2835spi_swd_read_reg(uint8_t cmd, uint32_t *value, uint32_t ap_de
 	while(1)
 	{
 		// send cmd + trn + ack
-		const uint32_t ack = swd_send_rcv(cmd, 8 + 1 + 3) >> 9; // LSB first
-		
+		const uint32_t ack = (swd_send_rcv(cmd, 8 + 1 + 3) >> 9) & 0x7; // LSB first
+
+		// uint32_t header = cmd | (SWD_ACK_OK << 1) << 8;
+		// const uint32_t ack = (swd_send_rcv(header, 8 + 1 + 3) >> 9) & 0x7; // LSB first
+
 		switch(ack) 
 		{
 		case SWD_ACK_OK:
 		{
 			// rcv data
-			*value = swd_send_rcv(0, 32); 
+			uint32_t _value;
+			_value= swd_send_rcv(0, 32); 
 			int parity = swd_send_rcv(0, 1);
-			if(parity != (parity_u32(*value)))
+			if(parity != (parity_u32(_value)))
 			{
 				LOG_DEBUG("Wrong parity detected");
 				cmd_queued_retval = ERROR_FAIL;
+			}
+			if(value != NULL)
+			{
+				*value = _value;
 			}
 			if (cmd & SWD_CMD_APnDP)
 				swd_send(NULL, ap_delay_clk);
@@ -332,8 +343,10 @@ static void bcm2835spi_swd_write_reg(uint8_t cmd, uint32_t value, uint32_t ap_de
 	while(1)
 	{
 		// send cmd + trn + ack + trn
-		const uint32_t ack = swd_send_rcv(cmd, 8 + 1 + 3 + 1) >> 9; // LSB first
+		const uint32_t ack = (swd_send_rcv(cmd, 8 + 1 + 3 + 1) >> 9) & 0x7; // LSB first
 
+		// uint32_t header = cmd | (SWD_ACK_OK << 1) << 8;
+		// const uint32_t ack = (swd_send_rcv(header, 8 + 1 + 3 + 1) >> 9) & 0x7; // LSB first
 		switch (ack) 
 		{
 		case SWD_ACK_OK:
